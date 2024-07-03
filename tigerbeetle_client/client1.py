@@ -56,7 +56,7 @@ TBPacket._fields_ = [
 ]
 
 # Load the shared library
-lib = ctypes.CDLL('/path/to/tigerbeetle_client.so')  # Adjust the path to your shared library
+lib = ctypes.CDLL('native/linux-x64/libtb_client.so')  # Adjust the path to your shared library
 
 # Define function prototypes based on tb_client.h
 lib.tb_client_init.argtypes = [POINTER(c_void_p), UInt128, c_char_p, c_uint32, c_uint32, c_void_p, c_void_p]
