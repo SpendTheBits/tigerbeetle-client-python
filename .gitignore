@@ -1,1 +1,8 @@
 .hypothesis/*
+*.pyc
+*.pyo
+# *.so
+# *.so.*
+*.swp
+*.swo
+*.swn

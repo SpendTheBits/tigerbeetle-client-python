@@ -1,5 +1,3 @@
-# tigerbeetle_client/client.py
-
 import requests
 from typing import List
 
@@ -72,7 +70,10 @@ class Client:
 
     def _request(self, endpoint: str, data: List[dict]):
         url = f"http://{self.addresses[0]}/{endpoint}"
-        response = requests.post(url, json=data)
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        response = requests.post(url, json=data, headers=headers)
         if response.status_code != 200:
             raise Exception(f"Error: {response.status_code}, {response.text}")
         return response.json()
@@ -92,3 +93,25 @@ class Client:
     def lookup_transfers(self, ids: List[UInt128]):
         data = [{"high": id.high, "low": id.low} for id in ids]
         return self._request("lookup_transfers", data)
+
+# Example usage
+# if __name__ == "__main__":
+#     tb_address = "127.0.0.1:3000"
+#     cluster_id = UInt128.zero()
+#     addresses = [tb_address]
+    
+#     client = Client(cluster_id, addresses)
+    
+#     accounts = [
+#         Account(Id=UInt128(0, 137), UserData128=UInt128(0, 1), UserData64=1000, UserData32=100, Ledger=1, Code=718, Flags=0),
+#     ]
+    
+#     create_accounts_response = client.create_accounts(accounts)
+#     print(f"Create accounts response: {create_accounts_response}")
+    
+#     transfers = [
+#         Transfer(Id=UInt128(0, 1), DebitAccountId=UInt128(0, 1), CreditAccountId=UInt128(0, 2), Amount=10, UserData128=UInt128(0, 2000), UserData64=200, UserData32=2, Timeout=0, Ledger=1, Code=1, Flags=0),
+#     ]
+    
+#     create_transfers_response = client.create_transfers(transfers)
+#     print(f"Create transfers response: {create_transfers_response}")
