@@ -54,9 +54,9 @@ TBPacket._fields_ = [
     ("batch_size", c_uint32),
     ("reserved", c_uint8 * 8)
 ]
-
+from libtb import LIBTB_CLIENT_PATH
 # Load the shared library
-lib = ctypes.CDLL('native/linux-x64/libtb_client.so')  # Adjust the path to your shared library
+lib = ctypes.CDLL(LIBTB_CLIENT_PATH)
 
 # Define function prototypes based on tb_client.h
 lib.tb_client_init.argtypes = [POINTER(c_void_p), UInt128, c_char_p, c_uint32, c_uint32, c_void_p, c_void_p]
@@ -109,47 +109,47 @@ class Client:
 
             lib.tb_client_submit(self.client, packet)
 
-# # Example usage
-# if __name__ == "__main__":
-#     cluster_id = UInt128(0, 0)
-#     addresses = ['127.0.0.1:3000']
+# Example usage
+if __name__ == "__main__":
+    cluster_id = UInt128(0, 0)
+    addresses = ['127.0.0.1:3000']
     
-#     client = Client(cluster_id, addresses)
+    client = Client(cluster_id, addresses)
     
-#     accounts = [
-#         TBAccount(
-#             id=UInt128(0, 137),
-#             debits_pending=UInt128(0, 0),
-#             debits_posted=UInt128(0, 0),
-#             credits_pending=UInt128(0, 0),
-#             credits_posted=UInt128(0, 0),
-#             user_data_128=UInt128(0, 1),
-#             user_data_64=1000,
-#             user_data_32=100,
-#             reserved=0,
-#             ledger=1,
-#             code=718,
-#             flags=0,
-#             timestamp=0
-#         )
-#     ]
-#     client.create_accounts(accounts)
+    accounts = [
+        TBAccount(
+            id=UInt128(0, 137),
+            debits_pending=UInt128(0, 0),
+            debits_posted=UInt128(0, 0),
+            credits_pending=UInt128(0, 0),
+            credits_posted=UInt128(0, 0),
+            user_data_128=UInt128(0, 1),
+            user_data_64=1000,
+            user_data_32=100,
+            reserved=0,
+            ledger=1,
+            code=718,
+            flags=0,
+            timestamp=0
+        )
+    ]
+    client.create_accounts(accounts)
 
-#     transfers = [
-#         TBTransfer(
-#             id=UInt128(0, 1),
-#             debit_account_id=UInt128(0, 1),
-#             credit_account_id=UInt128(0, 2),
-#             amount=UInt128(0, 10),
-#             pending_id=UInt128(0, 0),
-#             user_data_128=UInt128(0, 2000),
-#             user_data_64=200,
-#             user_data_32=2,
-#             timeout=0,
-#             ledger=1,
-#             code=1,
-#             flags=0,
-#             timestamp=0
-#         )
-#     ]
-#     client.create_transfers(transfers)
+    # transfers = [
+    #     TBTransfer(
+    #         id=UInt128(0, 1),
+    #         debit_account_id=UInt128(0, 1),
+    #         credit_account_id=UInt128(0, 2),
+    #         amount=UInt128(0, 10),
+    #         pending_id=UInt128(0, 0),
+    #         user_data_128=UInt128(0, 2000),
+    #         user_data_64=200,
+    #         user_data_32=2,
+    #         timeout=0,
+    #         ledger=1,
+    #         code=1,
+    #         flags=0,
+    #         timestamp=0
+    #     )
+    # ]
+    # client.create_transfers(transfers)

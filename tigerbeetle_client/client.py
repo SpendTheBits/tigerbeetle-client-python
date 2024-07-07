@@ -1,117 +1,128 @@
-import requests
-from typing import List
+import socket
+import struct
+from dataclasses import dataclass, asdict
 
-class UInt128:
-    def __init__(self, high: int = 0, low: int = 0):
-        self.high = high
-        self.low = low
+# Define the operation codes based on the protocol
+OP_CREATE_ACCOUNTS = 1
+OP_CREATE_TRANSFERS = 2
 
-    def __repr__(self):
-        return f"UInt128({self.high}, {self.low})"
+# Define the header format constants
+HEADER_FORMAT = '>IHHI'
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
-    @staticmethod
-    def zero() -> 'UInt128':
-        return UInt128(0, 0)
-
+# Define the account and transfer structures
+@dataclass
 class Account:
-    def __init__(self, Id: UInt128, UserData128: UInt128, UserData64: int, UserData32: int, Ledger: int, Code: int, Flags: int):
-        self.Id = Id
-        self.UserData128 = UserData128
-        self.UserData64 = UserData64
-        self.UserData32 = UserData32
-        self.Ledger = Ledger
-        self.Code = Code
-        self.Flags = Flags
+    id: int
+    user_data: dict
 
-    def to_dict(self):
-        return {
-            "Id": {"high": self.Id.high, "low": self.Id.low},
-            "UserData128": {"high": self.UserData128.high, "low": self.UserData128.low},
-            "UserData64": self.UserData64,
-            "UserData32": self.UserData32,
-            "Ledger": self.Ledger,
-            "Code": self.Code,
-            "Flags": self.Flags,
-        }
-
+@dataclass
 class Transfer:
-    def __init__(self, Id: UInt128, DebitAccountId: UInt128, CreditAccountId: UInt128, Amount: int, UserData128: UInt128, UserData64: int, UserData32: int, Timeout: int, Ledger: int, Code: int, Flags: int):
-        self.Id = Id
-        self.DebitAccountId = DebitAccountId
-        self.CreditAccountId = CreditAccountId
-        self.Amount = Amount
-        self.UserData128 = UserData128
-        self.UserData64 = UserData64
-        self.UserData32 = UserData32
-        self.Timeout = Timeout
-        self.Ledger = Ledger
-        self.Code = Code
-        self.Flags = Flags
+    from_account: int
+    to_account: int
+    amount: int
 
-    def to_dict(self):
-        return {
-            "Id": {"high": self.Id.high, "low": self.Id.low},
-            "DebitAccountId": {"high": self.DebitAccountId.high, "low": self.DebitAccountId.low},
-            "CreditAccountId": {"high": self.CreditAccountId.high, "low": self.CreditAccountId.low},
-            "Amount": self.Amount,
-            "UserData128": {"high": self.UserData128.high, "low": self.UserData128.low},
-            "UserData64": self.UserData64,
-            "UserData32": self.UserData32,
-            "Timeout": self.Timeout,
-            "Ledger": self.Ledger,
-            "Code": self.Code,
-            "Flags": self.Flags,
-        }
+class TigerBeetleClient:
+    def __init__(self, host='localhost', port=3000, timeout=5):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.socket = None
 
-class Client:
-    def __init__(self, cluster_id: UInt128, addresses: List[str]):
-        self.cluster_id = cluster_id
-        self.addresses = addresses
+    def connect(self):
+        """Connect to the TigerBeetle server."""
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(self.timeout)  # Set a timeout for blocking socket operations
+        try:
+            self.socket.connect((self.host, self.port))
+            print(f"Connected to TigerBeetle server at {self.host}:{self.port}")
+        except socket.error as e:
+            print(f"Connection error: {e}")
+            raise
 
-    def _request(self, endpoint: str, data: List[dict]):
-        url = f"http://{self.addresses[0]}/{endpoint}"
-        headers = {
-            'Content-Type': 'application/json'
-        }
-        response = requests.post(url, json=data, headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Error: {response.status_code}, {response.text}")
-        return response.json()
+    def send_message(self, opcode, payload_bytes):
+        """Send a message to the server."""
+        try:
+            # Compute the message size including the header
+            message_size = HEADER_SIZE + len(payload_bytes)
+            
+            # Pack the header (message_size, opcode, result, flags)
+            header = struct.pack(HEADER_FORMAT, message_size, opcode, 0, 0)
+            
+            # Combine the header and payload
+            message = header + payload_bytes
+            
+            # Send the full message to the server
+            self.socket.sendall(message)
+        except socket.error as e:
+            print(f"Send message error: {e}")
+            raise
 
-    def create_accounts(self, accounts: List[Account]):
-        data = [account.to_dict() for account in accounts]
-        return self._request("create_accounts", data)
+    def receive_response(self):
+        """Receive a response from the server."""
+        try:
+            # Read the header first
+            header_bytes = self.socket.recv(HEADER_SIZE)
+            if not header_bytes:
+                return None
+            
+            # Unpack the header to get the message size
+            message_size, opcode, result, flags = struct.unpack(HEADER_FORMAT, header_bytes)
+            
+            # Read the rest of the message based on the message size
+            response_bytes = self.socket.recv(message_size - HEADER_SIZE)
+            
+            # Return the opcode and the payload
+            return opcode, response_bytes
+        except socket.error as e:
+            print(f"Receive response error: {e}")
+            raise
 
-    def lookup_accounts(self, ids: List[UInt128]):
-        data = [{"high": id.high, "low": id.low} for id in ids]
-        return self._request("lookup_accounts", data)
+    def create_accounts(self, accounts):
+        """Create new accounts on the server."""
+        # Serialize accounts to binary format
+        payload_bytes = b''.join(
+            struct.pack('>QI', account.id, len(account.user_data)) + account.user_data.encode('utf-8')
+            for account in accounts
+        )
+        self.send_message(OP_CREATE_ACCOUNTS, payload_bytes)
+        return self.receive_response()
 
-    def create_transfers(self, transfers: List[Transfer]):
-        data = [transfer.to_dict() for transfer in transfers]
-        return self._request("create_transfers", data)
+    def create_transfers(self, transfers):
+        """Create new transfers on the server."""
+        # Serialize transfers to binary format
+        payload_bytes = b''.join(
+            struct.pack('>QII', transfer.from_account, transfer.to_account, transfer.amount)
+            for transfer in transfers
+        )
+        self.send_message(OP_CREATE_TRANSFERS, payload_bytes)
+        return self.receive_response()
 
-    def lookup_transfers(self, ids: List[UInt128]):
-        data = [{"high": id.high, "low": id.low} for id in ids]
-        return self._request("lookup_transfers", data)
+    def close(self):
+        """Close the connection to the server."""
+        if self.socket:
+            self.socket.close()
+            self.socket = None
 
 # Example usage
-# if __name__ == "__main__":
-#     tb_address = "127.0.0.1:3000"
-#     cluster_id = UInt128.zero()
-#     addresses = [tb_address]
-    
-#     client = Client(cluster_id, addresses)
-    
-#     accounts = [
-#         Account(Id=UInt128(0, 137), UserData128=UInt128(0, 1), UserData64=1000, UserData32=100, Ledger=1, Code=718, Flags=0),
-#     ]
-    
-#     create_accounts_response = client.create_accounts(accounts)
-#     print(f"Create accounts response: {create_accounts_response}")
-    
-#     transfers = [
-#         Transfer(Id=UInt128(0, 1), DebitAccountId=UInt128(0, 1), CreditAccountId=UInt128(0, 2), Amount=10, UserData128=UInt128(0, 2000), UserData64=200, UserData32=2, Timeout=0, Ledger=1, Code=1, Flags=0),
-#     ]
-    
-#     create_transfers_response = client.create_transfers(transfers)
-#     print(f"Create transfers response: {create_transfers_response}")
+if __name__ == "__main__":
+    client = TigerBeetleClient(host='127.0.0.1', port=3000)
+    try:
+        client.connect()
+        
+        # Create accounts
+        accounts = [
+            Account(id=1, user_data='{"name": "John Doe"}'),
+            Account(id=2, user_data='{"name": "Jane Doe"}')
+        ]
+        response = client.create_accounts(accounts)
+        print(f"Create Accounts Response: {response}")
+        
+        # Create transfers
+        transfers = [
+            Transfer(from_account=1, to_account=2, amount=500)
+        ]
+        response = client.create_transfers(transfers)
+        print(f"Create Transfers Response: {response}")
+    finally:
+        client.close()
