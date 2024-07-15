@@ -1,6 +1,7 @@
 import ctypes
 from ctypes import c_uint64, c_uint32, c_uint16, c_void_p, POINTER, Structure, byref, c_char_p, c_uint8, c_int
-import struct
+import platform
+import os
 
 # Define UInt128 structure
 class UInt128(ctypes.Structure):
@@ -15,8 +16,10 @@ class TBAccount(ctypes.Structure):
         ("debits_posted", UInt128),
         ("credits_pending", UInt128),
         ("credits_posted", UInt128),
-        ("user_data", UInt128),
-        ("reserved", c_uint32 * 4),  # 4*32=128
+        ("user_data_128", UInt128),
+        ("user_data_64", c_uint64),
+        ("user_data_32", c_uint32),
+        ("reserved", c_uint32),
         ("ledger", c_uint32),
         ("code", c_uint16),
         ("flags", c_uint16),
@@ -41,8 +44,43 @@ TBPacket._fields_ = [
 ]
 TBPacket._pack_ = 1  # Ensure correct alignment
 
-from libtb import LIBTB_CLIENT_PATH
+# Define the library path dynamically based on platform and architecture
+def get_library_path():
+    arch_map = {
+        "arm64": "aarch64",
+        "x86_64": "x86_64"
+    }
+
+    platform_map = {
+        "Linux": "linux",
+        "Darwin": "macos",
+        "Windows": "windows",
+    }
+
+    arch = platform.machine()
+    plat = platform.system()
+
+    if arch not in arch_map:
+        raise Exception(f"Unsupported arch: {arch}")
+
+    if plat not in platform_map:
+        raise Exception(f"Unsupported platform: {plat}")
+
+    extra = ''
+    if plat == "Linux":
+        extra = '-gnu'
+        if os.path.exists("/proc/self/map_files/"):
+            for file in os.listdir("/proc/self/map_files/"):
+                real_path = os.readlink(os.path.join("/proc/self/map_files/", file))
+                if 'musl' in real_path:
+                    extra = '-musl'
+                    break
+
+    filename = f"./bin/{arch_map[arch]}-{platform_map[plat]}{extra}/client.node"
+    return filename
+
 # Load the shared library
+LIBTB_CLIENT_PATH = get_library_path()
 lib = ctypes.CDLL(LIBTB_CLIENT_PATH)
 
 # Define function prototypes based on tb_client.h
@@ -61,7 +99,7 @@ lib.tb_client_deinit.restype = None
 class Client:
     def __init__(self, cluster_id: UInt128, addresses: list):
         self.client = c_void_p()
-        address_str = addresses[0].encode('utf-8')
+        address_str = ",".join(addresses).encode('utf-8')
         result = lib.tb_client_init(byref(self.client), cluster_id, address_str, len(address_str), 1, None, None)
         if result != 0:
             raise Exception(f"Error initializing client: {result}")
@@ -83,51 +121,30 @@ class Client:
             packet.contents.operation = 129  # TB_OPERATION_CREATE_ACCOUNTS
             packet.contents.data_size = ctypes.sizeof(TBAccount)
             
-            # Handle endianness
             packed_data = self.pack_account(account)
             packet.contents.data = ctypes.cast(ctypes.create_string_buffer(packed_data), c_void_p)
             print(f"Packet prepared with operation={packet.contents.operation} and data_size={packet.contents.data_size}")
 
-            # Print debug information
-            print(f"Submitting account: {account}")
-            print(f"Account size: {ctypes.sizeof(TBAccount)}")
-            print(f"Packet operation: {packet.contents.operation}")
-            print(f"Packet data size: {packet.contents.data_size}")
-            print(f"Packet data: {bytes(ctypes.string_at(packet.contents.data, packet.contents.data_size))}")
-
-            # Print individual field values for debugging
-            print(f"id_high: {account.id.high}, id_low: {account.id.low}")
-            print(f"debits_pending_high: {account.debits_pending.high}, debits_pending_low: {account.debits_pending.low}")
-            print(f"debits_posted_high: {account.debits_posted.high}, debits_posted_low: {account.debits_posted.low}")
-            print(f"credits_pending_high: {account.credits_pending.high}, credits_pending_low: {account.credits_pending.low}")
-            print(f"credits_posted_high: {account.credits_posted.high}, credits_posted_low: {account.credits_posted.low}")
-            print(f"user_data_high: {account.user_data.high}, user_data_low: {account.user_data.low}")
-            print(f"reserved: {account.reserved[:]}")
-            print(f"ledger: {account.ledger}")
-            print(f"code: {account.code}")
-            print(f"flags: {account.flags}")
-            print(f"timestamp: {account.timestamp}")
-
-            lib.tb_client_submit(self.client, packet)
-            print("Packet submitted")
+            try:
+                lib.tb_client_submit(self.client, packet)
+                print("Packet submitted successfully")
+            except Exception as e:
+                print(f"Error submitting packet: {e}")
 
     def pack_account(self, account):
         # Packing the account with little-endian format
         packed_data = struct.pack(
-            '<QQQQQQQQIIIIHHQ',  # Little-endian format for all fields
+            '<QQQQQQQQQQQQIIIIHHQ',  # Little-endian format for all fields
             account.id.high, account.id.low,
             account.debits_pending.high, account.debits_pending.low,
             account.debits_posted.high, account.debits_posted.low,
             account.credits_pending.high, account.credits_pending.low,
             account.credits_posted.high, account.credits_posted.low,
-            account.user_data.high, account.user_data.low,
-            *account.reserved,
-            account.ledger, account.code, account.flags, account.timestamp
+            account.user_data_128.high, account.user_data_128.low,
+            account.user_data_64, account.user_data_32,
+            account.reserved, account.ledger, account.code, account.flags, account.timestamp
         )
         return packed_data
-
-# Verify sizes
-print(f"Size of TBAccount: {ctypes.sizeof(TBAccount)}")  # Should be 128
 
 # Example usage
 if __name__ == "__main__":
@@ -143,8 +160,10 @@ if __name__ == "__main__":
             debits_posted=UInt128(0, 0),
             credits_pending=UInt128(0, 0),
             credits_posted=UInt128(0, 0),
-            user_data=UInt128(0, 1),
-            reserved=(c_uint32 * 4)(),  # Initialize reserved with correct size
+            user_data_128=UInt128(0, 1),
+            user_data_64=0,
+            user_data_32=0,
+            reserved=0,  # Initialize reserved with correct size
             ledger=1,
             code=718,
             flags=0,

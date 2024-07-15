@@ -1,5 +1,9 @@
 import ctypes
 import platform
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Define the architecture and platform mapping
 arch_map = {
@@ -95,18 +99,22 @@ class TigerBeetleClient:
         self.init_client()
 
     def init_client(self):
-        cluster_id = tb_uint128_t(0, 1)  # Example cluster ID
+        cluster_id = tb_uint128_t(0, 0)  # Cluster ID with both high and low parts set to 0
         address = b'127.0.0.1:3000'  # Example address
         packets_count = 1024
         on_completion_ctx = ctypes.c_void_p()
         on_completion_fn = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(tb_packet_t), ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32)(self.on_completion)
+        logging.debug(f"Initializing client with cluster_id: {cluster_id}, address: {address.decode()}, packets_count: {packets_count}")
         result = self.lib.tb_client_init(ctypes.byref(self.context), cluster_id, address, len(address), packets_count, on_completion_ctx, on_completion_fn)
         if result != 0:
             raise RuntimeError("Failed to initialize client")
+        logging.debug(f"Client initialized successfully with context: {self.context}")
 
     def on_completion(self, context, client, packet, data, size):
         # Handle completion (dummy implementation)
-        pass
+        logging.debug(f"Completion handler called with context: {context}, client: {client}, packet: {packet}, data size: {size}")
+        # Print detailed packet information
+        logging.debug(f"Packet operation: {packet.contents.operation}, status: {packet.contents.status}, data size: {packet.contents.data_size}")
 
     def create_accounts(self, accounts):
         # Acquire a packet
@@ -114,20 +122,54 @@ class TigerBeetleClient:
         acquire_status = self.lib.tb_client_acquire_packet(self.context, ctypes.byref(packet))
         if acquire_status != 0:
             raise RuntimeError("Failed to acquire packet")
+        logging.debug(f"Packet acquired: {packet}")
 
         # Fill packet with account data
         packet.contents.operation = 129  # TB_OPERATION_CREATE_ACCOUNTS
         packet.contents.data_size = ctypes.sizeof(tb_account_t) * len(accounts)
         packet.contents.data = ctypes.cast((tb_account_t * len(accounts))(*accounts), ctypes.c_void_p)
+        logging.debug(f"Packet filled with data: {packet.contents.data}")
 
         # Submit the packet
         self.lib.tb_client_submit(self.context, packet)
+        logging.debug(f"Packet submitted: {packet}")
 
         # Release the packet
         self.lib.tb_client_release_packet(self.context, packet)
+        logging.debug(f"Packet released: {packet}")
+
+    def lookup_accounts(self, account_ids):
+        # Acquire a packet
+        packet = ctypes.POINTER(tb_packet_t)()
+        acquire_status = self.lib.tb_client_acquire_packet(self.context, ctypes.byref(packet))
+        if acquire_status != 0:
+            raise RuntimeError("Failed to acquire packet")
+        logging.debug(f"Packet acquired for lookup: {packet}")
+
+        # Fill packet with account lookup data
+        packet.contents.operation = 131  # TB_OPERATION_LOOKUP_ACCOUNTS
+        packet.contents.data_size = ctypes.sizeof(tb_uint128_t) * len(account_ids)
+        packet.contents.data = ctypes.cast((tb_uint128_t * len(account_ids))(*account_ids), ctypes.c_void_p)
+        logging.debug(f"Packet filled with lookup data: {packet.contents.data}")
+
+        # Submit the packet
+        self.lib.tb_client_submit(self.context, packet)
+        logging.debug(f"Lookup packet submitted: {packet}")
+
+        # For simplicity, assume synchronous completion and the result is immediately available
+        results = (tb_account_t * len(account_ids))()
+        ctypes.memmove(results, packet.contents.data, packet.contents.data_size)
+        logging.debug(f"Lookup results received: {results}")
+
+        # Release the packet
+        self.lib.tb_client_release_packet(self.context, packet)
+        logging.debug(f"Lookup packet released: {packet}")
+
+        return results
 
     def deinit(self):
         self.lib.tb_client_deinit(self.context)
+        logging.debug(f"Client deinitialized")
 
 # Example usage
 if __name__ == "__main__":
@@ -140,5 +182,12 @@ if __name__ == "__main__":
     ]
 
     client.create_accounts(accounts)
-    print("Accounts created successfully")
+    logging.info("Accounts created successfully")
+
+    # Verify created accounts
+    account_ids = [tb_uint128_t(0, 1), tb_uint128_t(0, 2)]
+    result = client.lookup_accounts(account_ids)
+    for account in result:
+        logging.info(f"Account ID: {account.id.low}, Balance: {account.debits_pending.low}")
+
     client.deinit()
